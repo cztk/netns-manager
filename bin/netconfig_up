@@ -1,0 +1,303 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Source the configuration and utility scripts
+source "$(dirname "$0")/../src/address"
+source "$(dirname "$0")/../src/bridge"
+source "$(dirname "$0")/../src/commands"
+source "$(dirname "$0")/../src/interface"
+source "$(dirname "$0")/../src/log"
+source "$(dirname "$0")/../src/namespace"
+source "$(dirname "$0")/../src/route"
+source "$(dirname "$0")/../src/route-policy"
+source "$(dirname "$0")/../src/veth"
+
+# Load the YAML configuration
+if [ -z "${CONFIG_FILE}" ]; then
+	CONFIG_FILE="$(dirname "$0")/../config/netconfig.json"
+fi
+NETCONFIG=$(jq '.netconfig' $CONFIG_FILE)
+
+if [ -z "$NETCONFIG" ] || [ "$NETCONFIG" == "null" ]; then
+	echo "Error: 'netconfig' section not found or is empty in the configuration file."
+	exit 1
+fi
+
+add_addresses() {
+	local addr_entries
+	local addr_entry
+	local interface
+	local namespace
+	local address
+	local netmask
+
+	addr_entries=$(echo "$NETCONFIG" | jq -c '.addresses[] // []')
+
+	# Iterate over the extracted address entries
+	echo "$addr_entries" | while IFS= read -r addr_entry; do
+		interface=$(echo "$addr_entry" | jq -r '.interface')
+		namespace=$(echo "$addr_entry" | jq -r '.namespace // empty')
+		address=$(echo "$addr_entry" | jq -r '.address')
+		netmask=$(echo "$addr_entry" | jq -r '.netmask')
+
+		address_add "$interface" "$address" "$netmask" "$namespace"
+	done
+
+}
+
+add_routes() {
+	local routes
+	local route
+	local to
+	local via
+	local dev
+	local table
+	local metric
+	local onlink
+	local namespace=""
+
+	routes=$(echo "$NETCONFIG" | jq -c '.routes[] // []')
+
+	# Iterate over each route
+	echo "$routes" | while IFS= read -r route; do
+		to=$(echo "$route" | jq -r '.to')
+		via=$(echo "$route" | jq -r '.via')
+		table=$(echo "$route" | jq -r '.table // empty')
+		metric=$(echo "$route" | jq -r '.metric // empty')
+		namespace=$(echo "$route" | jq -r '.namespace // empty')
+		onlink=$(echo "$route" | jq -r '.onlink // empty')
+		dev=$(echo "$route" | jq -r '.dev')
+		interface_bring_up "$dev" "$namespace"
+		route_add "$to" "$via" "$table" "$metric" "$namespace" "$onlink" "$dev"
+	done
+
+}
+
+add_routing_policies() {
+	local rules
+	local rule
+	local from
+	local to
+	local table
+	local priority
+	local namespace
+	local fwmark
+	local iif
+	local oif
+
+	rules=$(echo "$NETCONFIG" | jq -c '.["routing-policy"][] // []')
+
+	# Iterate over rules
+	echo "$rules" | while IFS= read -r rule; do
+		from=$(echo "$rule" | jq -r '.from // empty')
+		to=$(echo "$rule" | jq -r '.to // empty')
+		table=$(echo "$rule" | jq -r '.table')
+		priority=$(echo "$rule" | jq -r '.priority // empty')
+		namespace=$(echo "$rule" | jq -r '.namespace // empty')
+		fwmark=$(echo "$rule" | jq -r '.fwmark // empty')
+		iif=$(echo "$rule" | jq -r '.iif // empty')
+		oif=$(echo "$rule" | jq -r '.oif // empty')
+
+		routing_policy_add "$from" "$to" "$table" "$priority" "$namespace" "$fwmark" "$iif" "$oif"
+	done
+
+}
+
+configure_interface_params() {
+	local params
+	local param
+	local interface
+	local namespace
+	local mtu
+	local txqueuelen
+	local rxqueuelen
+	local other_params
+
+	params=$(echo "$NETCONFIG" | jq -c '.["iface-params"][] // []')
+
+	# Iterate over each parameter entry
+	echo "$params" | while IFS= read -r param; do
+		interface=$(echo "$param" | jq -r '.interface')
+		namespace=$(echo "$param" | jq -r '.namespace // empty')
+		mtu=$(echo "$param" | jq -r '.mtu // empty')
+		txqueuelen=$(echo "$param" | jq -r '.txqueuelen // empty')
+		rxqueuelen=$(echo "$param" | jq -r '.rxqueuelen // empty')
+		other_params=$(echo "$param" | jq -r '.other_params // empty')
+
+		[ -n "$mtu" ] && interface_set_mtu "$interface" "$mtu" "$namespace"
+		[ -n "$txqueuelen" ] && interface_set_txqueuelen "$interface" "$txqueuelen" "$namespace"
+		[ -n "$rxqueuelen" ] && interface_set_rxqueuelen "$interface" "$rxqueuelen" "$namespace"
+		[ -n "$other_params" ] && interface_set_other_params "$interface" "$other_params" "$namespace"
+	done
+
+}
+
+add_bridges() {
+	local bridges
+	local bridge
+	local bridge_name
+	local interfaces
+	local interface
+	local iface_name
+	local namespace
+
+	bridges=$(echo "$NETCONFIG" | jq -c '.bridges[] // []')
+
+	# Iterate over each bridge
+	echo "$bridges" | while IFS= read -r bridge; do
+		bridge_name=$(echo "$bridge" | jq -r '.name // empty')
+		namespace=$(echo "$bridge" | jq -r '.namespace // empty')
+
+		log "$bridge_name"
+
+		# Add the bridge, optionally specifying the namespace
+		bridge_add "$bridge_name" "$namespace"
+
+		interfaces=$(echo "$bridge" | jq -c '.interfaces[]')
+
+		# Add interfaces to bridges
+		log "Adding interfaces to bridge..."
+		echo "$interfaces" | while IFS= read -r interface; do
+			iface_name=$(echo "$interface" | jq -r '.name')
+			log "$iface_name"
+			bridge_add_interface "$iface_name" "$bridge_name" "$namespace"
+		done
+
+	done
+
+}
+
+add_veths() {
+	local veths
+	local veth
+	local veth_name
+	local host_namespace
+	local peer
+	local peer_namespace
+
+	veths=$(echo "$NETCONFIG" | jq -c '.veths[] // []')
+
+	# Iterate over each veth
+	echo "$veths" | while IFS= read -r veth; do
+		veth_name=$(echo "$veth" | jq -r ".name")
+		host_namespace=$(echo "$veth" | jq -r ".namespace // empty")
+		peer=$(echo "$veth" | jq -r ".peername")
+		peer_namespace=$(echo "$veth" | jq -r ".peer_namespace // empty")
+
+		log "${veth_name}:${peer}"
+
+		# Add the veth pair
+		veth_add "$veth_name" "$peer" "$host_namespace" "$peer_namespace"
+		interface_bring_up "$veth_name" "$host_namespace"
+		interface_bring_up "$peer" "$peer_namespace"
+	done
+
+}
+
+# TODO this is not ideal
+# expecting clean start with no interaction to bring interfaces down, assuming
+# they are in root namespace
+# and for bringing up assuming they have been moved to the correct namespace
+# think of artificial interfaces, same name different namespace
+set_interfaces_updown() {
+	local updown="$1"
+	local interfaces
+	local interface
+	local iface
+	local namespace
+
+	interfaces=$(echo "$NETCONFIG" | jq -c '.interfaces[] // []')
+	# Loop over each interface entry
+	echo "$interfaces" | while IFS= read -r interface; do
+		iface=$(echo "$interface" | jq -r '.name')
+		namespace=$(echo "$interface" | jq -r '.namespace // empty')
+
+		if [ "$updown" = "up" ]; then
+			# Bring up the interface
+			interface_bring_up "$iface" "$namespace"
+		else
+			# Bring down the interface
+			interface_bring_down "$iface"
+		fi
+
+	done
+}
+
+move_interfaces_to_namespaces() {
+	local fromto="$1"
+	local interfaces
+	local interface
+	local iface
+	local namespace
+
+	interfaces=$(echo "$NETCONFIG" | jq -c '.interfaces[] // []')
+	# Loop over each interface entry
+	echo "$interfaces" | while IFS= read -r interface; do
+		iface=$(echo "$interface" | jq -r '.name')
+		namespace=$(echo "$interface" | jq -r '.namespace // empty')
+
+		if [ "$fromto" = "to" ]; then
+			# Move the interface to the namespace if specified
+			[ -n "$namespace" ] && interface_to_namespace "$iface" "$namespace"
+		else
+			# Move the interface to the namespace if specified
+			[ -n "$namespace" ] && interface_to_root "$iface" "$namespace"
+		fi
+	done
+}
+
+# 1: Setup namespaces
+
+NAMESPACES=$(echo "$NETCONFIG" | jq -r '.. | objects | select(has("namespace")) | .namespace' | sort -u)
+for namespace in $NAMESPACES; do
+	if [ -n "$namespace" ]; then
+		log_debug "Adding namespace: $namespace"
+		namespace_add "$namespace"
+	fi
+done
+
+# 2: Bring down all interfaces and move to namespace if needed
+# TODO in cases we want to reuse the script, we'd need to probe for interfaces in namespaces
+log "Bringing down all interfaces..."
+set_interfaces_updown "down"
+
+# 11: Move interfaes to namespaes if appliable
+log "Moving interfaces to namespaes..."
+move_interfaces_to_namespaces "to"
+
+# 3: Add veth pairs
+log "Adding veth pairs..."
+add_veths
+
+# 4: Add bridges
+log "Adding bridges..."
+add_bridges
+
+# 6: Configure addresses
+log "Configuring addresses..."
+add_addresses
+
+# 9: Configure interface parameters
+log "Configuring interface parameters..."
+configure_interface_params
+
+# 10: Bring up all interfaces
+# relying on interface_count to be declared at #2
+log "Bringing up all interfaces..."
+set_interfaces_updown "up"
+
+# 7: Add routes
+log "Adding routes..."
+add_routes
+
+# 8: Add routing rules
+log "Adding routing rules..."
+add_routing_policies
+
+echo "Network configuration completed."

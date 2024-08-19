@@ -1,0 +1,125 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Function to add an IP address to a network interface with a provided subnet.
+# Parameters:
+# 1. iface: The name of the network interface (required).
+# 2. ip_address: The IP address to add (required).
+# 3. subnet_mask: The subnet mask (e.g., 24 for 255.255.255.0) (required).
+# 4. namespace: The network namespace where the interface is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface, is missing.
+# - 11 if ip_address is missing.
+# - 12 if subnet_mask is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the IP address could not be added.
+#
+# Example usage:
+# address_add "eth0" "192.168.1.10" "24" "ns1"
+address_add() {
+	local iface="$1"
+	local ip_address="$2"
+	local subnet_mask="$3"
+	local namespace="$4"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: add_ip_address requires iface!, ip_address, subnet_mask [, namespace ]."
+		return 10
+	fi
+	if [ -z "$ip_address" ]; then
+		log_error "11: add_ip_address requires iface, ip_address!, subnet_mask [, namespace ]."
+		return 11
+	fi
+	if [ -z "$subnet_mask" ]; then
+		log_error "12: add_ip_address requires iface, ip_address, subnet_mask! [, namespace ]."
+		return 12
+	fi
+
+	# Get the command prefix using the namespace
+
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Add IP address to the interface
+	$cmd_prefix addr add "${ip_address}/${subnet_mask}" dev "$iface"
+	retval=$?
+	log_trace "return code is:" "$retval"
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to add IP address ${ip_address}/${subnet_mask} to ${iface} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully added IP address ${ip_address}/${subnet_mask} to ${iface} in namespace ${namespace:-root}."
+	return $retval
+}
+
+# Function to remove an IP address from a network interface.
+# Parameters:
+# 1. iface: The name of the network interface (required).
+# 2. ip_address: The IP address to remove (required).
+# 3. subnet_mask: The subnet mask (e.g., 24 for 255.255.255.0) (required).
+# 4. namespace: The network namespace where the interface is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface, is missing.
+# - 11 if ip_address is missing.
+# - 12 if subnet_mask is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the IP address could not be removed.
+#
+# Example usage:
+# address_delete "eth0" "192.168.1.10" "24" "ns1"
+address_delete() {
+	local iface="$1"
+	local ip_address="$2"
+	local subnet_mask="$3"
+	local namespace="$4"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: add_ip_address requires iface!, ip_address, subnet_mask [, namespace ]."
+		return 10
+	fi
+	if [ -z "$ip_address" ]; then
+		log_error "11: add_ip_address requires iface, ip_address!, subnet_mask [, namespace ]."
+		return 11
+	fi
+	if [ -z "$subnet_mask" ]; then
+		log_error "12: add_ip_address requires iface, ip_address, subnet_mask! [, namespace ]."
+		return 12
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Remove IP address from the interface
+	$cmd_prefix addr del "${ip_address}/${subnet_mask}" dev "$iface"
+	retval=$?
+	log_trace "return code is:" "$retval"
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to remove IP address ${ip_address}/${subnet_mask} from ${iface} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully removed IP address ${ip_address}/${subnet_mask} from ${iface} in namespace ${namespace:-root}."
+	return $retval
+}

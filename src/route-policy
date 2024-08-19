@@ -1,0 +1,185 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Function to add a routing policy rule.
+# Parameters:
+# 1. from: The source address to match in the rule (optional).
+# 2. to: The destination address to match in the rule (optional).
+# 3. table: The routing table to use for the rule (required).
+# 4. priority: The priority of the rule (optional).
+# 5. namespace: The network namespace in which to add the rule (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the table parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the rule could not be added.
+#
+# The function adds a routing policy rule if it does not already exist.
+#
+# Example usage:
+# routing_policy_add "192.168.1.0/24" "192.168.2.0/24" "100" "1000" "ns1"
+# if routing_policy_add "192.168.1.0/24" "192.168.2.0/24" "100" "1000" "ns1"; then
+#    echo "Routing policy added successfully."
+# else
+#    echo "Failed to add routing policy."
+# fi
+routing_policy_add() {
+	local from="$1"
+	local to="$2"
+	local table="$3"
+	local priority="$4"
+	local namespace="$5"
+	local fwmark="$6"
+	local iif="$7"
+	local oif="$8"
+	local retval
+	local cmd_prefix
+	local rule_cmd
+
+	log_debug "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$table" ]; then
+		log_error "20: routing_policy_add requires the table parameter to be provided."
+		return 10
+	fi
+
+	# Get the command prefix using the namespace
+	# IFS=' ' This sets the Internal Field Separator (IFS) to a space character temporarily for the read command,
+	# ensuring that words are split correctly.
+	# read -r -a cmd_prefix <<< "$(command_ip "$namespace")":
+	#    -r: Prevents read from interpreting backslashes as escape characters.
+	#    -a cmd_prefix: Assigns the input to the cmd_prefix array.
+	#    <<< "$(command_ip "$namespace")": Passes the output of command_ip to read via a here-string,
+	#    which is then split into the array based on the IFS.
+	IFS=' ' read -r -a cmd_prefix <<<"$(command_ip "$namespace")"
+	log_trace "ip cmd is:" " ${cmd_prefix[*]}"
+
+	# Build the rule command
+	rule_cmd=("${cmd_prefix[@]}")
+	rule_cmd+=("rule" "add")
+	[ -n "$from" ] && rule_cmd+=("from" "${from}")
+	[ -n "$to" ] && rule_cmd+=("to" "${to}")
+	rule_cmd+=("table" "${table}")
+	[ -n "$priority" ] && rule_cmd+=("priority" "${priority}")
+	[ -n "$fwmark" ] && rule_cmd+=("fwmark" "${fwmark}")
+	[ -n "$iif" ] && rule_cmd+=("iif" "${iif}")
+	[ -n "$oif" ] && rule_cmd+=("oif" "${oif}")
+
+	# Check if the rule already exists
+	"${cmd_prefix[@]}" rule show | grep -qw "from ${from} to ${to} lookup ${table}"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+
+		log_notice "Adding rule from ${from} to ${to} in namespace ${namespace:-root}, table ${table}, priority ${priority}..."
+		log_debug "${rule_cmd[@]}"
+		"${rule_cmd[@]}"
+		retval=$?
+		log_trace "return code is:" " $retval"
+
+		if [ $retval -ne 0 ]; then
+			log_error "20: Failed to add rule from ${from} to ${to} in namespace ${namespace:-root}."
+			return 20
+		fi
+
+	fi
+
+	log_notice "Rule from ${from} to ${to}, table ${table} already exists in namespace ${namespace:-root}. Skipping."
+
+	return 0 # Success
+}
+
+# Function to remove a routing policy rule.
+# Parameters:
+# 1. from: The source address to match in the rule (optional).
+# 2. to: The destination address to match in the rule (optional).
+# 3. table: The routing table to use for the rule (required).
+# 4. priority: The priority of the rule (optional).
+# 5. namespace: The network namespace in which to remove the rule (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the table parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the rule could not be removed.
+#
+# The function removes a routing policy rule if it exists.
+#
+# Example usage:
+# routing_policy_delete "192.168.1.0/24" "192.168.2.0/24" "100" "1000" "ns1"
+# if routing_policy_delete "192.168.1.0/24" "192.168.2.0/24" "100" "1000" "ns1"; then
+#    echo "Routing policy removed successfully."
+# else
+#    echo "Failed to remove routing policy."
+# fi
+routing_policy_delete() {
+	local from="$1"
+	local to="$2"
+	local table="$3"
+	local priority="$4"
+	local namespace="$5"
+	local fwmark="$5"
+	local iif="$6"
+	local oif="$7"
+	local retval
+	local cmd_prefix
+	local rule_cmd
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$table" ]; then
+		log_error "10: routing_policy_delete requires the table parameter to be provided."
+		return 10
+	fi
+
+	# Set up command prefix for the namespace
+	# IFS=' ' This sets the Internal Field Separator (IFS) to a space character temporarily for the read command,
+	# ensuring that words are split correctly.
+	# read -r -a cmd_prefix <<< "$(command_ip "$namespace")":
+	#    -r: Prevents read from interpreting backslashes as escape characters.
+	#    -a cmd_prefix: Assigns the input to the cmd_prefix array.
+	#    <<< "$(command_ip "$namespace")": Passes the output of command_ip to read via a here-string,
+	#    which is then split into the array based on the IFS.
+	IFS=' ' read -r -a cmd_prefix <<<"$(command_ip "$namespace")"
+	log_trace "ip cmd is:" " ${cmd_prefix[*]}"
+
+	# Build the rule command
+	local rule_cmd=("${cmd_prefix[@]}")
+	rule_cmd+=("rule" "delete")
+	[ -n "$from" ] && rule_cmd+=("from" "${from}")
+	[ -n "$to" ] && rule_cmd+=("to" "${to}")
+	rule_cmd+=("table" "${table}")
+	[ -n "$priority" ] && rule_cmd+=("priority" "${priority}")
+	[ -n "$fwmark" ] && rule_cmd+=("fwmark" "${fwmark}")
+	[ -n "$iif" ] && rule_cmd+=("iif" "${iif}")
+	[ -n "$oif" ] && rule_cmd+=("oif" "${oif}")
+
+	# Check if the rule exists
+	"${cmd_prefix[@]}" rule show | grep -qw "from ${from} to ${to} lookup ${table}"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+
+		log_debug "Removing rule from ${from} to ${to} in namespace ${namespace:-root}, table ${table}, priority ${priority}..."
+		"${rule_cmd[@]}"
+		retval=$?
+		log_trace "return code is:" " $retval"
+		if [ $retval -ne 0 ]; then
+			log_error "20: Failed to remove rule from ${from} to ${to} in namespace ${namespace:-root}."
+			return 20
+		fi
+	fi
+
+	log "Rule from ${from} to ${to}, table ${table} does not exist in namespace ${namespace:-root}. Skipping."
+
+	return 0 # Success
+}

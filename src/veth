@@ -1,0 +1,177 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Function to create a veth pair and optionally assign each interface to different network namespaces.
+# Parameters:
+# 1. host_veth: The name of the host-side veth interface (required).
+# 2. peer_veth: The name of the peer-side veth interface (required).
+# 3. host_namespace: The network namespace for the host veth interface (optional).
+# 4. peer_namespace: The network namespace for the peer veth interface (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the host_veth parameter is missing.
+# - 11 if the peer_veth parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the host namespace is set but does not exist
+# - 21 if the peer namespace is set but does not exist
+# - 22 if the veth pair could not be created
+# - 23 if the peer could not be moved to peer namespace
+#
+# This function creates a veth pair with the specified host and peer interfaces.
+# If namespaces are provided, it assigns each interface to those namespaces.
+#
+# Example usage:
+# veth_add "veth0" "veth1" "ns1" "ns2"
+# if veth_add "veth0" "veth1" "ns1" "ns2"; then
+#    echo "Veth pair created successfully."
+# else
+#    echo "Failed to create veth pair."
+# fi
+veth_add() {
+	local host_veth="$1"
+	local peer_veth="$2"
+	local host_namespace="$3"
+	local peer_namespace="$4"
+	local retval
+	local cmd_prefix
+	local host_cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$host_veth" ]; then
+		log_error "10: add_veth_pair requires the host_veth to be provided."
+		return 10
+	fi
+
+	if [ -z "$peer_veth" ]; then
+		log_error "11: add_veth_pair requires the peer_veth to be provided."
+		return 11
+	fi
+
+	if [ -n "$host_namespace" ]; then
+		namespace_exists "$host_namespace"
+		retval=$?
+		log_trace "return code is:" "$retval"
+		if [ $retval -ne 0 ]; then
+			log_error "20: Host namespace ${host_namespace} does not exist."
+			return 20
+		fi
+	fi
+
+	if [ -n "$peer_namespace" ]; then
+		namespace_exists "$peer_namespace"
+		retval=$?
+		log_trace "return code is:" "$retval"
+		if [ $retval -ne 0 ]; then
+			log_error "21: Peer namespace ${peer_namespace} does not exist."
+			return 21
+		fi
+	fi
+
+	host_cmd_prefix=$(command_ip "$host_namespace")
+	log_trace "ip cmd is:" "$host_cmd_prefix"
+
+	# Create the veth pair
+	$host_cmd_prefix link add "$host_veth" type veth peer name "$peer_veth"
+	retval=$?
+	log_trace "return code is:" "$retval"
+	if [ $retval -ne 0 ]; then
+		log_error "22: Failed to create veth pair ${host_veth}:${peer_veth} in  namespace ${host_namespace:-root}"
+		return 22
+	fi
+
+	log_debug "Created veth pair ${host_veth}:${peer_veth}."
+
+	# Move the peer veth to the specified namespace, if different
+	if [ "$host_namespace" != "$peer_namespace" ]; then
+		log_debug "Moving veth peer ${peer_veth} to namespace ${peer_namespace:-root}."
+
+		if [ -z "$peer_namespace" ]; then
+			interface_to_root "$peer_veth" "$host_namespace"
+			retval=$?
+		else
+			interface_to_namespace "$peer_veth" "$peer_namespace"
+			retval=$?
+		fi
+
+		log_trace "return code is:" "$retval"
+		if [ $retval -ne 0 ]; then
+			log_error "23: Failed to move peer interface ${peer_veth} to namespace ${peer_namespace:-root}."
+			return 23
+		fi
+
+		log_debug "Peer interface ${peer_veth} moved to namespace ${peer_namespace:-root}."
+	fi
+
+	log_notice "Successfully created veth pair ${host_veth}:${peer_veth} in namespace ${host_namespace:-root}."
+	return 0
+}
+
+# Function to delete a veth interface.
+# Parameters:
+# 1. host_veth: The name of the host-side veth interface (required).
+# 2. host_namespace: The network namespace for the host veth interface (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the host_veth parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the veth interface could not be deleted
+# - 21 if the veth interface does not exist ( in given namespace )
+#
+# This function deletes the specified host-side veth interface.
+# If the peer interface is in another namespace, it will be deleted automatically.
+#
+# Example usage:
+# veth_delete "veth0" "ns1"
+# if veth_delete "veth0" "ns1"; then
+#    echo "Veth pair deleted successfully."
+# else
+#    echo "Failed to delete veth pair."
+# fi
+veth_delete() {
+	local host_veth="$1"
+	local host_namespace="$2"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$host_veth" ]; then
+		log_error "10: veth_delete requires the host_veth to be provided."
+		return 10
+	fi
+
+	# Check if the host veth exists in the specified namespace
+	interface_exists_orin_namespace "$host_veth" "$host_namespace"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "21: Host veth interface ${host_veth} does not exist in namespace ${host_namespace:-root}."
+		return 21
+	fi
+
+	# Get the command prefix using the namespace
+
+	cmd_prefix=$(command_ip "$host_namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Delete the veth pair
+	$cmd_prefix link delete "$host_veth"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to delete veth interface ${host_veth} in namespace ${host_namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully deleted veth interface ${host_veth} from namespace ${host_namespace:-root}."
+	return 0
+}

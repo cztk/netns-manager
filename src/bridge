@@ -1,0 +1,277 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Function to create a network bridge.
+# Parameters:
+# 1. bridge_name: The name of the bridge to create (required).
+# 2. bridge_namespace: The network namespace for the bridge (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the bridge_name parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the bridge could not be created.
+#
+# This function creates a network bridge with the specified name.
+# If a namespace is provided, the bridge will be created in that namespace.
+#
+# Example usage:
+# add_bridge "br0" "ns1"
+# if bridge_add "br0" "ns1"; then
+#    echo "Bridge created successfully."
+# else
+#    echo "Failed to create bridge."
+# fi
+bridge_add() {
+	local bridge_name="$1"
+	local namespace="$2"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$bridge_name" ]; then
+		log_error "10: bridge_add requires the bridge_name to be provided."
+		return 10
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Create the bridge
+	$cmd_prefix link add "$bridge_name" type bridge
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to create bridge ${bridge_name} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully created bridge ${bridge_name} in namespace ${namespace:-root}."
+	return $retval
+}
+
+# Function to add a network interface as a slave to a bridge.
+# Parameters:
+# 1. interface_name: The name of the interface to add to the bridge (required).
+# 2. bridge_name: The name of the bridge to which the interface will be added (required).
+# 3. bridge_namespace: The network namespace where the bridge is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the interface_name parameter is missing.
+# - 11 if the bridge_name parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the bridge does not exist in the specified namespace.
+# - 21 if the interface does not exist in the specified namespace.
+# - 22 if the interface could not be added to the bridge.
+#
+# This function adds a network interface as a slave to a bridge.
+# It ensures that both the interface and the bridge are in the same namespace.
+#
+# Example usage:
+# bridge_add_interface "eth0" "br0" "ns1"
+# if bridge_add_interface "eth0" "br0" "ns1"; then
+#    echo "Interface added to bridge successfully."
+# else
+#    echo "Failed to add interface to bridge."
+# fi
+bridge_add_interface() {
+	local interface_name="$1"
+	local bridge_name="$2"
+	local namespace="$3"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$interface_name" ]; then
+		log_error "10: bridge_add_interface requires the interface_name to be provided."
+		return 10
+	fi
+
+	if [ -z "$bridge_name" ]; then
+		log_error "11: bridge_add_interface requires the bridge_name to be provided."
+		return 11
+	fi
+
+	# Check if the bridge exists in the specified namespace
+	interface_exists_orin_namespace "$bridge_name" "$namespace"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "20: Bridge ${bridge_name} does not exist in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	# Check if the interface exists in the specified namespace
+	interface_exists_orin_namespace "$interface_name" "$namespace"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "21: Interface ${interface_name} does not exist in namespace ${namespace:-root}."
+		return 21
+	fi
+
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Add the interface as a slave to the bridge
+	$cmd_prefix link set "$interface_name" master "$bridge_name"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "22: Failed to add interface ${interface_name} as a slave to bridge ${bridge_name} in namespace ${namespace:-root}."
+		return 22
+	fi
+
+	log_notice "Successfully added interface ${interface_name} as a slave to bridge ${bridge_name} in namespace ${namespace:-root}."
+	return $retval
+}
+
+# Function to remove all interfaces (slaves) from a network bridge.
+# Parameters:
+# 1. bridge_name: The name of the bridge from which to remove slaves (required).
+# 2. bridge_namespace: The network namespace where the bridge is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the bridge_name parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the bridge does not exist.
+# - 21 if any attached interface could not be removed from the bridge.
+#
+# This function removes all interfaces attached to the specified bridge.
+# If a namespace is provided, it operates on the bridge in that namespace.
+#
+# Example usage:
+# bridge_remove_interfaces "br0" "ns1"
+# if bridge_remove_interfaces "br0" "ns1"; then
+#    echo "Slaves removed successfully."
+# else
+#    echo "Failed to remove slaves."
+# fi
+bridge_remove_interfaces() {
+	local bridge_name="$1"
+	local namespace="$2"
+	local retval
+	local error_code=0
+	local cmd_prefix
+	local interfaces
+	local interface
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$bridge_name" ]; then
+		log_error "10: bridge_remove_interfaces requires the bridge_name to be provided."
+		return 10
+	fi
+
+	# Get the command prefix using the namespace
+
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Check if the bridge exists
+	interface_exists_in_namespace "$bridge_name" "$namespace"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "20: Bridge ${bridge_name} does not exist in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	# Get a list of all interfaces attached to the bridge
+	local interfaces
+	interfaces=$($cmd_prefix link show master "$bridge_name" | grep -oP '^d : K[w.-] ')
+
+	for interface in $interfaces; do
+		$cmd_prefix link set "$interface" nomaster
+		retval=$?
+		if [ $retval -ne 0 ]; then
+			log_error "21: Failed to remove interface ${interface} from bridge ${bridge_name} in namespace ${namespace:-root}."
+			error_code=21
+		fi
+		log_debug "Interface ${interface} removed from bridge ${bridge_name}."
+	done
+
+	log_notice "Successfully removed all interfaces from bridge ${bridge_name} in namespace ${namespace:-root}."
+	return $error_code
+}
+
+# Function to delete a network bridge.
+# Parameters:
+# 1. bridge_name: The name of the bridge to delete (required).
+# 2. bridge_namespace: The network namespace for the bridge (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the bridge_name parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the bridge does not exist.
+# - 21 if the interfaces could not be detached from bridge
+# - 22 if the bridge could not be deleted.
+#
+# This function deletes a network bridge. It first removes any attached interfaces (slaves) using the `remove_slaves_from_bridge` function.
+# If a namespace is provided, the bridge will be deleted from that namespace.
+#
+# Example usage:
+# bridge_delete "br0" "ns1"
+# if bridge_delete "br0" "ns1"; then
+#    echo "Bridge deleted successfully."
+# else
+#    echo "Failed to delete bridge."
+# fi
+bridge_delete() {
+	local bridge_name="$1"
+	local namespace="$2"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$bridge_name" ]; then
+		log_error "10: bridge_delete requires the bridge_name to be provided."
+		return 10
+	fi
+
+	# Check if the bridge exists
+	interface_exists_orin_namespace "$bridge_name" "$namespace"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "20: Bridge ${bridge_name} does not exist in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	# Remove slaves from the bridge
+	bridge_remove_interfaces "$bridge_name" "$namespace"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "21: Failed to remove slaves from bridge ${bridge_name} in namespace ${namespace:-root}."
+		return 21
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Delete the bridge
+	$cmd_prefix link delete "$bridge_name" type bridge
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "22: Failed to delete bridge ${bridge_name} in namespace ${namespace:-root}."
+		return 22
+	fi
+
+	log_notice "Successfully deleted bridge ${bridge_name} from namespace ${namespace:-root}."
+	return 0
+}

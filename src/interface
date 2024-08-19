@@ -1,0 +1,571 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Function to check if a network interface exists.
+# Parameters:
+# 1. iface: The name of the network interface to check (required).
+# 2. namespace: The network namespace where the interface might be located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface is missing.
+#
+# If the interface exists, the function returns:
+# - 0: The interface exists.
+#
+# If the interface does not exist or an error occurs, the function returns:
+# - 20: The interface does not exist.
+#
+# Example usage:
+# if interface_exists "eth0" "ns1"; then
+#    echo "Interface eth0 exists."
+# else
+#    echo "Interface eth0 does not exist."
+# fi
+interface_exists() {
+	local iface="$1"
+	local namespace="$2"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: interface_exists requires iface to be provided."
+		return 10
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Check if the interface exists
+	$cmd_prefix link show "$iface" >/dev/null 2>&1
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_debug "interface_exists failed to find the interface $iface in namespace ${namespace:-root}"
+		return 20
+	fi
+
+	log_debug "interface_exists found the interface $iface in namespace ${namespace:-root}"
+	return 0
+}
+
+# Function to bring a network interface up.
+# Parameters:
+# 1. iface: The name of the network interface (required).
+# 2. namespace: The network namespace where the interface is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the interface could not be brought up.
+#
+# Example usage:
+# interface_bring_up "eth0" "ns1"
+interface_bring_up() {
+	local iface="$1"
+	local namespace="$2"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: bring_interface_up requires iface to be provided."
+		return 10
+	fi
+
+	# Get the command prefix using the namespace
+
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Bring the interface up
+	$cmd_prefix link set "$iface" up
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to bring up interface ${iface} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully brought up interface ${iface} in namespace ${namespace:-root}."
+	return 0
+}
+
+# Function to bring a network interface down.
+# Parameters:
+# 1. iface: The name of the network interface (required).
+# 2. namespace: The network namespace where the interface is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the interface could not be brought down.
+#
+# Example usage:
+# interface_bring_down "eth0" "ns1"
+interface_bring_down() {
+	local iface="$1"
+	local namespace="$2"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: bring_interface_down requires iface to be provided." "$iface"
+		return 10
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Bring the interface down
+	$cmd_prefix link set "$iface" down
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to bring down interface ${iface} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully brought down interface ${iface} in namespace ${namespace:-root}."
+	return 0
+}
+
+# Function to set the MTU (Maximum Transmission Unit) on a network interface.
+# Parameters:
+# 1. iface: The name of the network interface (required).
+# 2. mtu: The MTU size to set (required).
+# 3. namespace: The network namespace where the interface is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface is missing.
+# - 11 if mtu is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the MTU could not be set.
+#
+# Example usage:
+# interface_set_mtu "eth0" "1500" "ns1"
+interface_set_mtu() {
+	local iface="$1"
+	local mtu="$2"
+	local namespace="$3"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: set_mtu requires iface! and mtu to be provided."
+		return 10
+	fi
+	if [ -z "$mtu" ]; then
+		log_error "11: set_mtu requires iface and mtu! to be provided."
+		return 11
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Set the MTU on the interface
+	$cmd_prefix link set "$iface" mtu "$mtu"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to set MTU ${mtu} on ${iface} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully set MTU ${mtu} on ${iface} in namespace ${namespace:-root}."
+	return 0
+}
+
+# Function to set the TX (Transmit) queue length on a network interface.
+# Parameters:
+# 1. iface: The name of the network interface (required).
+# 2. txqueuelen: The TX queue length to set (required).
+# 3. namespace: The network namespace where the interface is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface is missing.
+# - 11 if txqueuelen is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the TX queue length could not be set.
+#
+# Example usage:
+# interface_set_txqueuelen "eth0" "1000" "ns1"
+interface_set_txqueuelen() {
+	local iface="$1"
+	local txqueuelen="$2"
+	local namespace="$3"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: set_txqueuelen requires iface! and txqueuelen to be provided."
+		return 10
+	fi
+
+	if [ -z "$txqueuelen" ]; then
+		log_error "11: set_txqueuelen requires iface and txqueuelen! to be provided."
+		return 11
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Set the TX queue length on the interface
+	$cmd_prefix link set "$iface" txqueuelen "$txqueuelen"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to set TX queue length ${txqueuelen} on ${iface} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully set TX queue length ${txqueuelen} on ${iface} in namespace ${namespace:-root}."
+	return 0
+}
+
+# Function to set the RX (Receive) queue length on a network interface (if supported).
+# Parameters:
+# 1. iface: The name of the network interface (required).
+# 2. rxqueuelen: The RX queue length to set (required).
+# 3. namespace: The network namespace where the interface is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface is missing.
+# - 11 if rxqueuelen is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the RX queue length could not be set.
+#
+# Example usage:
+# interface_set_rxqueuelen "eth0" "1000" "ns1"
+interface_set_rxqueuelen() {
+	local iface="$1"
+	local rxqueuelen="$2"
+	local namespace="$3"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: set_rxqueuelen requires iface! and rxqueuelen to be provided."
+		return 10
+	fi
+	if [ -z "$rxqueuelen" ]; then
+		log_error "11: set_rxqueuelen requires iface and rxqueuelen! to be provided."
+		return 11
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Set the RX queue length on the interface
+	$cmd_prefix link set "$iface" rxqueuelen "$rxqueuelen"
+	retval=$?
+	log_trace "return code is:" " $retval"
+
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to set RX queue length ${rxqueuelen} on ${iface} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully set RX queue length ${rxqueuelen} on ${iface} in namespace ${namespace:-root}."
+	return 0 # Success
+}
+
+# Function to set miscellaneous parameters on a network interface.
+# Parameters:
+# 1. iface: The name of the network interface (required).
+# 2. params: The parameters to set (required).
+# 3. namespace: The network namespace where the interface is located (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if iface is missing.
+# - 11 if params is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the parameters could not be set.
+#
+# Example usage:
+# interface_set_other_params "eth0" "arp off" "ns1"
+interface_set_other_params() {
+	local iface="$1"
+	local params="$2"
+	local namespace="$3"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: set_other_params requires iface! and params to be provided."
+		return 10
+	fi
+
+	if [ -z "$params" ]; then
+		log_error "11: set_other_params requires iface and params! to be provided."
+		return 11
+	fi
+
+	# Get the command prefix using the namespace
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Apply other parameters to the interface
+	$cmd_prefix link set "$iface" "$params"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "20: Failed to set parameters '${params}' on ${iface} in namespace ${namespace:-root}."
+		return 20
+	fi
+
+	log_notice "Successfully set parameters '${params}' on ${iface} in namespace ${namespace:-root}."
+	return 0
+}
+
+# Function to check if a network interface exists within a given namespace.
+# Parameters:
+# 1. iface: The network interface name to check.
+# 2. ns: The network namespace where the interface should be checked.
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 11 if the interface is missing.
+# - 12 if the namespace is missing.
+#
+# If both are provided, it checks the interface in the namespace using the 'ip' command.
+# Expected return values from the 'ip' command:
+# - 0: The interface exists in the namespace.
+# - 1: The interface does not exist, or the namespace does not exist.
+#
+# Example usage
+# if interface_in_namespace "enp2s0" "namespace"; then
+#    echo "Interface enp2s0 exists in namespace."
+# else
+#    echo "Interface enp2s0 does not exist in namespace."
+# fi
+interface_in_namespace() {
+	local iface=$1
+	local namespace=$2
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	if [ -z "$iface" ]; then
+		log_error "10: interface_in_namespace called without interface param set"
+		return 10
+	fi
+
+	if [ -z "$namespace" ]; then
+		log_error "11: interface_in_namespace called without namespace param set"
+		return 11
+	fi
+
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	$cmd_prefix link show "$iface" >/dev/null 2>&1
+	retval=$?
+	log_trace "return code is:" " $retval"
+	return $retval
+}
+
+# Function to check if a network interface exists in a given namespace or the root namespace.
+# Parameters:
+# 1. iface: The name of the network interface to check.
+# 2. ns: The name of the network namespace to check. If not provided, the root namespace is checked.
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the interface parameter is missing.
+#
+# If the namespace is provided, it checks the existence of the interface in that namespace using the 'ip -n' command.
+# If the namespace is not provided, it checks in the root namespace using the 'ip' command.
+# Expected return values:
+# - 0: The interface exists in the specified namespace (or root namespace).
+# - 1: The interface does not exist in the specified namespace (or root namespace).
+#
+# Example usage:
+# if interface_exists_orin_namespace "enp2s0" "my_namespace"; then
+#    echo "Interface enp2s0 exists in my_namespace."
+# else
+#    echo "Interface enp2s0 does not exist in my_namespace."
+# fi
+interface_exists_orin_namespace() {
+	local iface=$1
+	local namespace=$2
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	if [ -z "$iface" ]; then
+		log_error "10: interface_exists_in_ns called without interface parameter."
+		return 10
+	fi
+
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	$cmd_prefix link show "$iface" >/dev/null 2>&1
+	retval=$?
+	log_trace "return code is:" " $retval"
+	return $retval
+}
+
+# Function to move a network interface to a specified namespace.
+# Parameters:
+# 1. iface: The name of the network interface to move (required).
+# 2. namespace: The name of the target namespace (required).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the iface parameter is missing.
+# - 11 if the namespace parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the namespace does not exist.
+# - 21 if the interface could not be moved to the specified namespace.
+#
+# This function moves the specified network interface to the target namespace using the 'ip link set' command.
+#
+# Example usage:
+# interface_to_namespace "eth0" "ns1"
+# if interface_to_namespace "eth0" "ns1"; then
+#    echo "Interface moved to namespace ns1."
+# else
+#    echo "Failed to move interface to namespace ns1."
+# fi
+interface_to_namespace() {
+	local iface="$1"
+	local namespace="$2"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: interface_to_namespace requires the iface to be provided."
+		return 10
+	fi
+
+	if [ -z "$namespace" ]; then
+		log_error "11: interface_to_namespace requires the namespace to be provided."
+		return 11
+	fi
+
+	namespace_exists "$namespace"
+	retval=$?
+
+	if [ $retval -ne 0 ]; then
+		log_error "20: namespace ${namespace} does not exist."
+		return 20
+	fi
+
+	cmd_prefix=$(command_ip)
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Move the interface to the specified namespace
+	$cmd_prefix link set "$iface" netns "$namespace"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "21: Failed to move interface ${iface} to namespace ${namespace}."
+		return 21
+	fi
+
+	log_notice "Successfully moved interface ${iface} to namespace ${namespace}."
+	return 0
+}
+
+# Function to move a network interface back to the root namespace.
+# Parameters:
+# 1. iface: The name of the network interface to move (required).
+# 2. namespace: The name of the current namespace of the interface (required).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the iface parameter is missing.
+# - 11 if the namespace parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the namespace does not exist.
+# - 21 if the interface could not be moved back to the root namespace.
+#
+# This function moves the specified network interface back to the root namespace using the 'ip link set' command.
+#
+# Example usage:
+# interface_to_root "eth0" "ns1"
+# if interface_to_root "eth0" "ns1"; then
+#    echo "Interface moved back to root namespace."
+# else
+#    echo "Failed to move interface back to root namespace."
+# fi
+interface_to_root() {
+	local iface="$1"
+	local namespace="$2"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$iface" ]; then
+		log_error "10: move_interface_to_root_namespace requires the iface to be provided."
+		return 10
+	fi
+
+	if [ -z "$namespace" ]; then
+		log_error "11: move_interface_to_root_namespace requires the namespace to be provided."
+		return 11
+	fi
+
+	namespace_exists "$namespace"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "20: namespace ${namespace} does not exist."
+		return 20
+	fi
+
+	cmd_prefix=$(command_ip "$namespace")
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	# Move the interface back to the root namespace
+	$cmd_prefix link set "$iface" netns 1
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "21: Failed to move interface ${iface} from namespace ${namespace} to the root namespace."
+		return 21
+	fi
+
+	log_notice "Successfully moved interface ${iface} from namespace ${namespace} to the root namespace."
+	return 0
+}

@@ -1,0 +1,76 @@
+{
+  "netconfig": {
+    "veths": [
+      {
+        "name": "veth-host",
+        "namespace": "net-root",
+        "peername": "veth-host-peer"
+      }
+    ],
+    "bridges": [
+      {
+        "name": "rootbr0",
+        "interfaces": [
+          {
+            "name": "veth-host-peer"
+          }
+        ]
+      }
+    ],
+    "interfaces": [
+      {
+        "name": "enp1s0",
+        "namespace": "net-root"
+      }
+    ],
+    "routes": [
+      {
+        "to": "0.0.0.0/0",
+        "via": "192.168.122.1",
+        "dev": "enp1s0",
+        "table": "main",
+        "metric": "100",
+        "namespace": "net-root"
+      },
+      {
+        "to": "0.0.0.0/0",
+        "via": "192.168.0.1",
+        "dev": "rootbr0",
+        "table": "main",
+        "metric": "100"
+      }
+    ],
+    "routing-policy": [
+      {
+        "from": "192.168.0.2/32",
+        "table": "main",
+        "priority": "100"
+      },
+      {
+        "from": "192.168.122.0/24",
+        "table": "main",
+        "priority": "100",
+        "namespace": "net-root"
+      }
+    ],
+    "addresses": [
+      {
+        "interface": "veth-host",
+        "namespace": "net-root",
+        "address": "192.168.0.1",
+        "netmask": "30"
+      },
+      {
+        "interface": "rootbr0",
+        "address": "192.168.0.2",
+        "netmask": "30"
+      },
+      {
+        "interface": "enp1s0",
+        "namespace": "net-root",
+        "address": "192.168.122.61",
+        "netmask": "24"
+      }
+    ]
+  }
+}

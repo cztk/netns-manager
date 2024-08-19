@@ -1,0 +1,169 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Function to check if a network namespace exists.
+# Parameters:
+# 1. ns: The name of the network namespace to check.
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the namespace parameter is missing.
+#
+# If the namespace is provided, it checks the existence of the namespace using the 'ip netns list' and 'grep' commands.
+# Expected return values:
+# - 0: The namespace exists (grep found the string).
+# - 1: The namespace does not exist (grep did not find the string).
+# - 2: An error occurred with the grep command.
+#
+# Example usage:
+# if namespace_exists "my_namespace"; then
+#    echo "Namespace my_namespace exists."
+# else
+#    echo "Namespace my_namespace does not exist."
+# fi
+namespace_exists() {
+	local namespace=$1
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	if [ -z "$namespace" ]; then
+		log_error "10: namespace_exists called without namespace parameter."
+		return 10
+	fi
+
+	cmd_prefix=$(command_ip)
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	$cmd_prefix netns list | grep -qw "$namespace"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	return $retval
+}
+
+# Function to add a network namespace if it does not already exist.
+# Parameters:
+# 1. namespace_name: The name of the network namespace to add.
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the namespace_name parameter is missing.
+#
+# If actions could not be performed it logs an error and returns:
+# - 20 if the namespace already exists
+# - 22 if the namespace could not be added
+#
+# This function first checks if the namespace already exists.
+# If the namespace does not exist, it will attempt to add it using the 'ip netns add' command.
+# If the namespace already exists, it logs a message and skips creation.
+#
+# Example usage:
+# if namespace_add "my_namespace"; then
+#    echo "Namespace added."
+# else
+#    echo "Namespace could not be added."
+# fi
+namespace_add() {
+	local namespace="$1"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	if [ -z "$namespace" ]; then
+		log_error "10: namespace_add called without namespace_name parameter."
+		return 10
+	fi
+
+	namespace_exists "${namespace}"
+	retval=$?
+	if [ $retval = 0 ]; then
+		log "20: Namespace ${namespace} already exists. Skipping creation."
+		return 20
+	fi
+
+	cmd_prefix=$(command_ip)
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	log_debug "Adding namespace ${namespace}..."
+	$cmd_prefix netns add "${namespace}"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+		log_error "21: Failed to create namespace ${namespace}"
+		return 21
+	fi
+
+	return 0
+}
+
+# Function to delete a network namespace if it exists and has no interfaces assigned.
+# Parameters:
+# 1. namespace_name: The name of the network namespace to delete.
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the namespace_name parameter is missing.
+#
+# If actions could not be performed it logs an error and returns:
+# - 20 if the namespace does not exist
+# - 21 if the namespace could not be deleted because it has interfaces connected still
+# - 22 if the namespace could not be deleted because unknown error
+#
+# This function first checks if the namespace exists.
+# If the namespace exists, it checks for any interfaces assigned to the namespace.
+# If there are interfaces assigned, it logs an error and does not delete the namespace.
+# If no interfaces are assigned, it deletes the namespace using the 'ip netns del' command.
+# if the network namespace does not exist it just logs a note
+#
+# Example usage:
+# namespace_delete "my_namespace"
+# if namespace_delete "my_namespace"; then
+#    echo "Namespace deleted."
+# else
+#    echo "Namespace could not be deleted."
+# fi
+namespace_delete() {
+	local namespace="$1"
+	local retval
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	if [ -z "$namespace" ]; then
+		log_error "10: namespace_delete called without namespace_name parameter."
+		return 10
+	fi
+
+	cmd_prefix=$(command_ip)
+	log_trace "ip cmd is:" "$cmd_prefix"
+
+	namespace_exists "${namespace}"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "20: Namespace ${namespace} does not exist. Skipping deletion."
+		return 20
+	fi
+
+	# Check for any interfaces assigned to the namespace
+	$cmd_prefix -n "${namespace}" link show | grep -q "^[0-9]:"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "21: Namespace ${namespace} has interfaces assigned. Cannot delete."
+		return 21
+	fi
+
+	log_debug "Deleting namespace ${namespace}..."
+	$cmd_prefix netns del "${namespace}"
+	retval=$?
+	if [ $retval -ne 0 ]; then
+		log_error "22: Failed to delete namespace ${namespace}"
+		return 22
+	fi
+
+	return 0
+}

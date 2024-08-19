@@ -1,0 +1,198 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Function to add a route to a specific destination via a specified gateway.
+# Parameters:
+# 1. to: The destination network or host (e.g., "192.168.1.0/24" or "default") (required).
+# 2. via: The gateway IP address to route through (required).
+# 3. table: The routing table to use (optional).
+# 4. metric: The route metric (optional).
+# 5. namespace: The network namespace in which to add the route (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the 'to' parameter is missing.
+# - 11 if the 'via' parameter is missing.
+# - 12 if onlink is set to true but dev is missing
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the route could not be added.
+#
+# This function adds a route to the specified destination via the provided gateway.
+# It checks if the route already exists before adding it.
+#
+# Example usage:
+# route_add "192.168.1.0/24" "10.0.0.1" "main" "100" "ns1"
+# if route_add "192.168.1.0/24" "10.0.0.1" "main" "100" "ns1"; then
+#    echo "Route added successfully."
+# else
+#    echo "Failed to add route."
+# fi
+# route_add "192.168.2.0/24" "192.168.1.1" "" "" "ns1" "true" "eth0"
+route_add() {
+	local to="$1"
+	local via="$2"
+	local table="$3"
+	local metric="$4"
+	local namespace="$5"
+	#local onlink="$6"
+	local onlink="true"
+	local dev="$7"
+	local retval
+	local cmd_prefix
+	local route_cmd
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$to" ]; then
+		log_error "10: route_add requires the 'to' parameter to be provided."
+		return 10
+	fi
+
+	if [ -z "$via" ]; then
+		log_error "11: route_add requires the 'via' parameter to be provided."
+		return 11
+	fi
+
+	if [ "$onlink" == "true" ] && [ -z "$dev" ]; then
+		log_error "12: route_add requires the 'dev' parameter to be provided when 'onlink' is true."
+		return 12
+	fi
+
+	# Set up command prefix for namespace
+	# IFS=' ' This sets the Internal Field Separator (IFS) to a space character temporarily for the read command,
+	# ensuring that words are split correctly.
+	# read -r -a cmd_prefix <<< "$(command_ip "$namespace")":
+	#    -r: Prevents read from interpreting backslashes as escape characters.
+	#    -a cmd_prefix: Assigns the input to the cmd_prefix array.
+	#    <<< "$(command_ip "$namespace")": Passes the output of command_ip to read via a here-string,
+	#    which is then split into the array based on the IFS.
+	IFS=' ' read -r -a cmd_prefix <<<"$(command_ip "$namespace")"
+	log_trace "ip cmd is:" " ${cmd_prefix[*]}"
+
+	# Build the route command
+	route_cmd=("${cmd_prefix[@]}")
+	route_cmd+=("route" "add")
+	route_cmd+=("${to}")
+	route_cmd+=("via" "${via}")
+	[ -n "$table" ] && route_cmd+=("table" "${table}")
+	[ -n "$metric" ] && route_cmd+=("metric" "${metric}")
+	[ "$onlink" == "true" ] && route_cmd+=("dev" "${dev}" "onlink")
+
+	log_debug "Checking if route to ${to} via ${via} already exists in namespace ${namespace:-root}${table:+, table $table}${onlink:+, onlink}..."
+
+	# Check if the route already exists
+	"${cmd_prefix[@]}" route show ${table:+table "$table"} | grep -qw "$to"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+
+		log_debug "Adding route to $to via $via in namespace ${namespace:-root}${table:+, table $table}${metric:+, metric $metric}${onlink:+, onlink}..."
+		"${route_cmd[@]}"
+		retval=$?
+		log_trace "return code is:" " $retval"
+		if [ $retval -ne 0 ]; then
+			log_error "20: Failed to add route to $to via $via in namespace ${namespace:-root}."
+			return 20
+		fi
+
+		log_notice "Successfully added route to $to via $via."
+		return 0
+
+	fi
+
+	log "Route to $to via $via already exists in namespace ${namespace:-root}. Skipping."
+	return 0
+}
+
+# Function to remove a route from a specific destination via a specified gateway.
+# Parameters:
+# 1. to: The destination network or host (e.g., "192.168.1.0/24" or "default") (required).
+# 2. via: The gateway IP address to route through (optional).
+# 3. table: The routing table to use (optional).
+# 4. metric: The route metric (optional).
+# 5. namespace: The network namespace in which to remove the route (optional).
+#
+# If required parameters are not provided, it logs an error and returns:
+# - 10 if the 'to' parameter is missing.
+#
+# If actions could not be performed, it logs an error and returns:
+# - 20 if the route could not be removed.
+#
+# This function removes the route to the specified destination.
+# It checks if the exact route exists before attempting to remove it.
+#
+# Example usage:
+# route_delete "192.168.1.0/24" "10.0.0.1" "main" "100" "ns1"
+# if route_delete "192.168.1.0/24" "10.0.0.1" "main" "100" "ns1"; then
+#    echo "Route removed successfully."
+# else
+#    echo "Failed to remove route."
+# fi
+route_delete() {
+	local to="$1"
+	local via="$2"
+	local table="$3"
+	local metric="$4"
+	local namespace="$5"
+	local retval
+	local cmd_prefix
+	local route_cmd
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	# Validate required parameters
+	if [ -z "$to" ]; then
+		log_error "10: route_delete requires the 'to' parameter to be provided."
+		return 10
+	fi
+
+	# Set up command prefix for namespace
+	# IFS=' ' This sets the Internal Field Separator (IFS) to a space character temporarily for the read command,
+	# ensuring that words are split correctly.
+	# read -r -a cmd_prefix <<< "$(command_ip "$namespace")":
+	#    -r: Prevents read from interpreting backslashes as escape characters.
+	#    -a cmd_prefix: Assigns the input to the cmd_prefix array.
+	#    <<< "$(command_ip "$namespace")": Passes the output of command_ip to read via a here-string,
+	#    which is then split into the array based on the IFS.
+	IFS=' ' read -r -a cmd_prefix <<<"$(command_ip "$namespace")"
+	log_trace "ip cmd is:" " ${cmd_prefix[*]}"
+
+	# Build the route delete command
+	route_cmd=("${cmd_prefix[@]}")
+	route_cmd+=("route" "del")
+	route_cmd+=("${to}")
+	[ -n "$via" ] && route_cmd+=("via" "${via}")
+	[ -n "$table" ] && route_cmd+=("table" "${table}")
+	[ -n "$metric" ] && route_cmd+=("metric" "${metric}")
+
+	log_debug "Checking if exact route to ${to} exists in namespace ${namespace:-root}${table:+, table $table}..."
+
+	# Check if the exact route exists before removing
+	"${cmd_prefix[@]}" route show ${table:+table "$table"} | grep -qw "$to"
+	retval=$?
+	log_trace "return code is:" " $retval"
+	if [ $retval -ne 0 ]; then
+
+		log_debug "Removing route to $to in namespace ${namespace:-root}${table:+, table $table}..."
+		"${route_cmd[@]}"
+		retval=$?
+		log_trace "return code is:" " $retval"
+		if [ $retval -ne 0 ]; then
+			log_error "20: Failed to remove route to $to in namespace ${namespace:-root}."
+			return 20
+		fi
+
+		log_notice "Successfully removed route to $to."
+		return 0
+	fi
+
+	log "Exact route does not exist in namespace ${namespace:-root}. Skipping."
+	return 0
+}

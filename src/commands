@@ -1,0 +1,34 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Function to generate the command prefix for the ip command, including the namespace if provided.
+# Parameters:
+# 1. namespace: The network namespace (optional).
+#
+# Returns:
+# - The command prefix for the ip command, including the namespace if provided.
+#
+# Warning:
+# - Does not check if the namespace exists
+#
+# Example usage:
+# command_ip=$(command_ip "ns1")
+# log_debug "Command prefix is: $command_ip"
+command_ip() {
+	local namespace="$1"
+	local cmd_prefix
+
+	log_trace "FUNCNAME=${FUNCNAME[*]}" " " "$@"
+
+	cmd_prefix="ip"
+	[ -n "$namespace" ] && cmd_prefix+=" -n ${namespace}"
+
+	echo "$cmd_prefix"
+
+}

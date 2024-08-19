@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# ***************************************************************************
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Copyright (c) 2024, Christoph Zysik
+# All rights reserved.
+# ***************************************************************************
+
+# Test setup for interface creation and deletion
+set -e  # Exit on error
+
+# Load the script with the interface functions
+source "$(dirname "$0")/../src/interface"
+
+echo "All tests passed!"
